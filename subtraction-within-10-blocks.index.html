@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ひきざんブロック・可視化版</title>
+    <style>
+        body {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 100vh; margin: 0; background-color: #f7f9fc;
+            font-family: 'Helvetica Neue', Arial, sans-serif; touch-action: manipulation; user-select: none;
+        }
+
+        .formula-container {
+            display: flex; align-items: center; gap: 15px; margin-bottom: 80px;
+            font-size: 50px; font-weight: bold;
+        }
+
+        .input-box {
+            width: 90px; height: 90px; border: 4px solid #333; border-radius: 15px;
+            display: flex; align-items: center; justify-content: center; background-color: white; cursor: pointer;
+        }
+
+        .input-box.num1 { color: #2ecc71; border-color: #2ecc71; }
+        .input-box.num2 { color: #e74c3c; border-color: #e74c3c; }
+        .input-box.ans  { background-color: #ffeaa7; border-color: #f1c40f; }
+
+        /* ステージ（ブロック置き場）の親 */
+        .stage-wrapper {
+            position: relative;
+            padding: 40px 20px;
+        }
+
+        .container {
+            display: flex; gap: 8px; padding: 20px; background: #fff;
+            border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+            position: relative; z-index: 2;
+        }
+
+        .block {
+            width: 60px; height: 60px; border: 2px solid #ecf0f1; border-radius: 10px;
+            background-color: #f8f9fa; display: flex; align-items: center; justify-content: center;
+            font-size: 28px; font-weight: bold; color: transparent;
+            transition: all 0.2s ease;
+        }
+
+        .is-active { 
+            background-color: #2ecc71; border-color: #27ae60; color: white; 
+            box-shadow: 0 4px #27ae60; transform: translateY(-2px);
+        }
+
+        .is-ghost { 
+            background-color: transparent; border: 2px dashed #bdc3c7; 
+            color: transparent;
+            -webkit-text-stroke: 1.5px #bdc3c7;
+            box-shadow: none;
+        }
+
+        /* 引いた数を囲む枠 */
+        #sub-group-frame {
+            position: absolute;
+            display: none;
+            border: 3px solid #e74c3c;
+            background-color: rgba(231, 76, 60, 0.1);
+            border-radius: 15px;
+            z-index: 1;
+            transition: all 0.3s ease;
+        }
+
+        /* 枠の上に表示される「ひいた数」 */
+        #sub-total-label {
+            position: absolute;
+            top: -45px;
+            width: 100%;
+            text-align: center;
+            color: #e74c3c;
+            font-size: 28px;
+            font-weight: bold;
+            display: none;
+        }
+
+        .controls { margin-top: 60px; }
+        .reset-btn {
+            padding: 18px 50px; font-size: 22px; background-color: #2d3436; color: white;
+            border: none; border-radius: 50px; cursor: pointer; font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="formula-container">
+        <div class="input-box num1" id="box1" onclick="confirmNum(1)"></div>
+        <span>－</span>
+        <div class="input-box num2" id="box2" onclick="confirmNum(2)"></div>
+        <span>＝</span>
+        <div class="input-box ans" id="boxAns" onclick="showAns()"></div>
+    </div>
+
+    <div class="stage-wrapper">
+        <div id="sub-group-frame">
+            <div id="sub-total-label"></div>
+        </div>
+        <div class="container" id="stage"></div>
+    </div>
+
+    <div class="controls">
+        <button class="reset-btn" onclick="resetGame()">はじめから</button>
+    </div>
+
+    <script>
+        const stage = document.getElementById('stage');
+        const box1 = document.getElementById('box1');
+        const box2 = document.getElementById('box2');
+        const boxAns = document.getElementById('boxAns');
+        const subFrame = document.getElementById('sub-group-frame');
+        const subLabel = document.getElementById('sub-total-label');
+
+        let mode = 'set'; 
+        let totalCount = 0;
+        let subCount = 0;
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        function playSound(type) {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const now = audioCtx.currentTime;
+            if (type === 'pop') { 
+                createOsc(523, 0.1, 'sine', now).frequency.exponentialRampToValueAtTime(880, now + 0.1);
+            } else if (type === 'down') { 
+                createOsc(440, 0.3, 'sine', now).frequency.exponentialRampToValueAtTime(110, now + 0.3);
+            } else if (type === 'confirm') {
+                createOsc(1000, 0.05, 'square', now, 0.05);
+            }
+        }
+
+        function createOsc(freq, duration, type, startTime, vol = 0.2) {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, startTime);
+            gain.gain.setValueAtTime(vol, startTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+            osc.connect(gain).connect(audioCtx.destination);
+            osc.start(startTime); osc.stop(startTime + duration);
+            return osc;
+        }
+
+        function init() {
+            stage.innerHTML = '';
+            for (let i = 1; i <= 10; i++) {
+                const b = document.createElement('div');
+                b.className = 'block'; b.id = 'B' + i;
+                b.innerText = i;
+                b.onclick = () => tapBlock(i);
+                stage.appendChild(b);
+            }
+            subFrame.style.display = 'none';
+            subLabel.style.display = 'none';
+        }
+
+        function tapBlock(idx) {
+            if (mode === 'locked') return;
+            if (mode === 'set') {
+                if (idx === totalCount + 1) {
+                    totalCount++;
+                    document.getElementById('B'+idx).classList.add('is-active');
+                    playSound('pop');
+                }
+            } else if (mode === 'sub') {
+                let targetIdx = totalCount - subCount;
+                if (idx === targetIdx && subCount < totalCount) {
+                    subCount++;
+                    const b = document.getElementById('B'+idx);
+                    b.classList.remove('is-active');
+                    b.classList.add('is-ghost');
+                    playSound('down');
+                }
+            }
+        }
+
+        function confirmNum(num) {
+            if (num === 1 && totalCount > 0 && mode === 'set') {
+                box1.innerText = totalCount;
+                mode = 'sub';
+                playSound('confirm');
+            } else if (num === 2 && subCount > 0 && mode === 'sub') {
+                box2.innerText = subCount;
+                mode = 'locked';
+                playSound('confirm');
+                drawSubFrame(); // 枠とラベルを表示
+            }
+        }
+
+        function drawSubFrame() {
+            // 消したブロックの範囲を計算
+            const firstSubIdx = totalCount - subCount + 1;
+            const lastSubIdx = totalCount;
+            
+            const firstBlock = document.getElementById('B' + firstSubIdx);
+            const lastBlock = document.getElementById('B' + lastSubIdx);
+            
+            const stageRect = stage.getBoundingClientRect();
+            const firstRect = firstBlock.getBoundingClientRect();
+            const lastRect = lastBlock.getBoundingClientRect();
+
+            // 枠の位置設定
+            subFrame.style.display = 'block';
+            subFrame.style.left = (firstRect.left - stageRect.left + 15) + 'px';
+            subFrame.style.top = (firstRect.top - stageRect.top + 15) + 'px';
+            subFrame.style.width = (lastRect.right - firstRect.left + 10) + 'px';
+            subFrame.style.height = (firstRect.height + 10) + 'px';
+
+            // ラベルの表示
+            subLabel.innerText = subCount;
+            subLabel.style.display = 'block';
+        }
+
+        function showAns() {
+            if (mode === 'locked') {
+                boxAns.innerText = totalCount - subCount;
+                playSound('confirm');
+            }
+        }
+
+        function resetGame() {
+            totalCount = 0; subCount = 0; mode = 'set';
+            box1.innerText = ''; box2.innerText = ''; boxAns.innerText = '';
+            init();
+        }
+
+        init();
+    </script>
+</body>
+</html>
